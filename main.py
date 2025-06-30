@@ -17,6 +17,7 @@ class SplitRequest(BaseModel):
     parent_image_url: str
     left_obs_id: str
     right_obs_id: str
+    split_direction: str = "vertical"  # "vertical" or "horizontal" (default is vertical)
 
 def auto_orient_pil_image(img):
     """Apply EXIF orientation so all mobile photos display as intended."""
@@ -33,24 +34,26 @@ def auto_orient_pil_image(img):
                 img = img.rotate(270, expand=True)
             elif orientation == 8:
                 img = img.rotate(90, expand=True)
-    except Exception as e:
+    except Exception:
         pass  # No EXIF or orientation info, just skip
     return img
 
-def split_and_return_images(image_url):
+def split_and_return_images(image_url, split_direction="vertical"):
     img_resp = requests.get(image_url)
     img = Image.open(io.BytesIO(img_resp.content))
     img = auto_orient_pil_image(img)
     width, height = img.size
 
-    # Only rotate if truly landscape (at least 10% wider than tall)
-    if width / height > 1.1:
-        img = img.rotate(90, expand=True)
-        width, height = img.size
-
-    mid = width // 2
-    left_img = img.crop((0, 0, mid, height))
-    right_img = img.crop((mid, 0, width, height))
+    if split_direction == "vertical":
+        mid = width // 2
+        left_img = img.crop((0, 0, mid, height))
+        right_img = img.crop((mid, 0, width, height))
+    elif split_direction == "horizontal":
+        mid = height // 2
+        left_img = img.crop((0, 0, width, mid))
+        right_img = img.crop((0, mid, width, height))
+    else:
+        raise ValueError("split_direction must be 'vertical' or 'horizontal'")
     return left_img, right_img
 
 def upload_to_supabase_storage(file_bytes, filename, content_type="image/jpeg"):
@@ -68,7 +71,9 @@ def upload_to_supabase_storage(file_bytes, filename, content_type="image/jpeg"):
 @app.post("/split-petri-image")
 async def split_petri_image(payload: SplitRequest):
     # 1. Download and split the parent image (EXIF- and orientation-aware)
-    left_img, right_img = split_and_return_images(payload.parent_image_url)
+    left_img, right_img = split_and_return_images(
+        payload.parent_image_url, payload.split_direction
+    )
 
     # 2. Upload images to Supabase Storage
     left_buf = io.BytesIO()
