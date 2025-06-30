@@ -17,7 +17,6 @@ class SplitRequest(BaseModel):
     parent_image_url: str
     left_obs_id: str
     right_obs_id: str
-    split_direction: str = "vertical"  # "vertical" or "horizontal" (default is vertical)
 
 def auto_orient_pil_image(img):
     """Apply EXIF orientation so all mobile photos display as intended."""
@@ -38,23 +37,26 @@ def auto_orient_pil_image(img):
         pass  # No EXIF or orientation info, just skip
     return img
 
-def split_and_return_images(image_url, split_direction="vertical"):
+def split_and_return_images(image_url):
     img_resp = requests.get(image_url)
     img = Image.open(io.BytesIO(img_resp.content))
     img = auto_orient_pil_image(img)
     width, height = img.size
 
-    if split_direction == "vertical":
-        mid = width // 2
-        left_img = img.crop((0, 0, mid, height))
-        right_img = img.crop((mid, 0, width, height))
-    elif split_direction == "horizontal":
-        mid = height // 2
-        left_img = img.crop((0, 0, width, mid))
-        right_img = img.crop((0, mid, width, height))
+    # Use a threshold to avoid rotating nearly square images
+    if height / width > 1.1:
+        # Portrait (tall): rotate 90°, then split vertically
+        img = img.rotate(90, expand=True)
+        width, height = img.size
+        split_used = "portrait-rotated"
     else:
-        raise ValueError("split_direction must be 'vertical' or 'horizontal'")
-    return left_img, right_img
+        # Landscape or nearly square: split vertically as-is
+        split_used = "landscape-or-square"
+
+    mid = width // 2
+    left_img = img.crop((0, 0, mid, height))
+    right_img = img.crop((mid, 0, width, height))
+    return left_img, right_img, split_used
 
 def upload_to_supabase_storage(file_bytes, filename, content_type="image/jpeg"):
     url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_STORAGE_BUCKET}/{filename}"
@@ -70,10 +72,8 @@ def upload_to_supabase_storage(file_bytes, filename, content_type="image/jpeg"):
 
 @app.post("/split-petri-image")
 async def split_petri_image(payload: SplitRequest):
-    # 1. Download and split the parent image (EXIF- and orientation-aware)
-    left_img, right_img = split_and_return_images(
-        payload.parent_image_url, payload.split_direction
-    )
+    # 1. Download, EXIF-normalize, and auto-orient/split image
+    left_img, right_img, split_used = split_and_return_images(payload.parent_image_url)
 
     # 2. Upload images to Supabase Storage
     left_buf = io.BytesIO()
@@ -111,10 +111,11 @@ async def split_petri_image(payload: SplitRequest):
             json={"split_processed": True},
             headers=headers
         )
-        # 4. Archive the original image
+        # 4. Archive the original image (for audit/AI/future)
         archive_payload = {
             "original_image_url": payload.parent_image_url,
-            "main_petri_observation_id": payload.parent_obs_id
+            "main_petri_observation_id": payload.parent_obs_id,
+            "split_method": split_used  # For future troubleshooting
         }
         await client.post(
             f"{SUPABASE_URL}/rest/v1/split_petri_images",
@@ -128,6 +129,6 @@ async def split_petri_image(payload: SplitRequest):
         "left_url": left_url,
         "right_url": right_url,
         "all_split_processed": True,
-        "archived": True
+        "archived": True,
+        "split_method": split_used
     }
-
