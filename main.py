@@ -94,19 +94,20 @@ async def split_petri_image(payload: SplitRequest):
         "Prefer": "return=minimal"
     }
 
-    async with httpx.AsyncClient() as client:
-        # 3. Archive the original image (for audit/AI/future)
-        archive_payload = {
-            "original_image_url": payload.parent_image_url,
-            "main_petri_observation_id": payload.parent_obs_id,
-            "split_method": split_used  # For future troubleshooting
-        }
-        archive_resp = await client.post(
-            f"{SUPABASE_URL}/rest/v1/split_petri_images",
-            json=archive_payload,
-            headers=headers
-        )
-        print("Archive insert response:", archive_resp.status_code, archive_resp.text)
+    #async with httpx.AsyncClient() as client:
+           # 3. (Archive skipped for now)
+    # archive_payload = {
+    #     "original_image_url": payload.parent_image_url,
+    #     "main_petri_observation_id": payload.parent_obs_id,
+    #     "split_method": split_used  # For future troubleshooting
+    # }
+    # archive_resp = await client.post(
+    #     f"{SUPABASE_URL}/rest/v1/split_petri_images",
+    #     json=archive_payload,
+    #     headers=headers
+    # )
+    # print("Archive insert response:", archive_resp.status_code, archive_resp.text)
+
 
         # 4. Update left/right/parent observations: set image_url and split_processed = true
         await client.patch(
